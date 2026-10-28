@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
@@ -7,8 +7,27 @@ from aiogram.types import InlineKeyboardMarkup, Message
 
 logger = logging.getLogger(__name__)
 
+# Все тексты кнопок нижнего меню быстрого доступа (ReplyKeyboard),
+# чтобы текстовые FSM-хэндлеры (ИИ-тьютор, Напоминания, Заметки) не перехватывали переходы по меню
+MAIN_MENU_BUTTON_TEXTS: Set[str] = {
+    "📅 Расписание",
+    "📝 Задания и дедлайны",
+    "📚 Ресурсы предметов",
+    "📊 Баллы и посещаемость",
+    "🤖 ИИ-тьютор",
+    "🤖 ИИ-тьютор (Gemini)",
+    "⚙️ Выбор ИИ-модели",
+    "⏰ Напоминания",
+    "📓 Конспекты и заметки",
+}
+
 # Хранит ID последнего активного «чистого экрана» для каждого чата
 _ACTIVE_SCREEN_MSG_ID: Dict[int, int] = {}
+
+
+def register_active_message(chat_id: int, message_id: int) -> None:
+    """Регистрирует ID сообщения (например, отправленного документа) как текущий активный экран."""
+    _ACTIVE_SCREEN_MSG_ID[chat_id] = message_id
 
 
 async def try_delete_message(message: Optional[Message]) -> None:
@@ -18,7 +37,11 @@ async def try_delete_message(message: Optional[Message]) -> None:
     try:
         await message.delete()
     except Exception as exc:
-        logger.debug("Could not delete message %s: %s", getattr(message, "message_id", None), exc)
+        logger.debug(
+            "Could not delete message %s: %s",
+            getattr(message, "message_id", None),
+            exc,
+        )
     finally:
         chat_id = getattr(getattr(message, "chat", None), "id", None)
         msg_id = getattr(message, "message_id", None)
@@ -36,14 +59,13 @@ async def render_clean_screen(
 ) -> Message:
     """
     Обновляет текущее окно бота (Single-Message UI), не засоряя чат новыми сообщениями.
-    - Удаляет сообщение пользователя (`user_trigger_msg`), если оно передано.
-    - Редактирует `prefer_message` на месте (если это текстовое сообщение).
-    - Если `prefer_message` содержит документ/медиа или не передано, удаляет старый экран и отправляет новый.
     """
+    if len(text) > 4090:
+        text = text[:4020] + "\n\n<i>... (текст сокращён)</i>"
+
     if user_trigger_msg is not None:
         await try_delete_message(user_trigger_msg)
 
-    # 1. Пытаемся отредактировать существующее сообщение (при нажатии inline-кнопок или обновлении статуса)
     if prefer_message is not None:
         has_media = bool(
             getattr(prefer_message, "document", None)
@@ -67,24 +89,27 @@ async def render_clean_screen(
                 if "message is not modified" in str(exc).lower():
                     _ACTIVE_SCREEN_MSG_ID[chat_id] = prefer_message.message_id
                     return prefer_message
-                logger.debug("Cannot edit prefer_message in place, recreating: %s", exc)
+                logger.debug(
+                    "Cannot edit prefer_message in place, recreating: %s", exc
+                )
             except Exception as exc:
-                logger.debug("Unexpected error editing prefer_message, recreating: %s", exc)
+                logger.debug(
+                    "Unexpected error editing prefer_message, recreating: %s",
+                    exc,
+                )
 
-        # Если это было сообщение с файлом или редактирование не удалось — удаляем его перед отправкой нового
         await try_delete_message(prefer_message)
 
-    # 2. Удаляем предыдущий запомненный экран в этом чате, чтобы не оставлять дубликатов
     prev_msg_id = _ACTIVE_SCREEN_MSG_ID.pop(chat_id, None)
     if prev_msg_id is not None and (
-        prefer_message is None or prev_msg_id != getattr(prefer_message, "message_id", None)
+        prefer_message is None
+        or prev_msg_id != getattr(prefer_message, "message_id", None)
     ):
         try:
             await bot.delete_message(chat_id=chat_id, message_id=prev_msg_id)
         except Exception:
             pass
 
-    # 3. Отправляем новое чистое сообщение-экран
     sent = await bot.send_message(
         chat_id=chat_id,
         text=text,

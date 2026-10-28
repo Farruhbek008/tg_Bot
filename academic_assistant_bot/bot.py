@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 
 from config import settings
 from database.db import engine, init_db
@@ -22,6 +23,27 @@ def setup_logging() -> None:
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
         stream=sys.stdout,
     )
+
+
+async def register_bot_commands(bot: Bot) -> None:
+    commands = [
+        BotCommand(command="start", description="🏠 Главное меню"),
+        BotCommand(command="schedule", description="📅 Расписание занятий"),
+        BotCommand(command="assignments", description="📝 Задания и дедлайны"),
+        BotCommand(command="resources", description="📚 Учебные ресурсы предметов"),
+        BotCommand(command="performance", description="📊 Баллы, GPA и посещаемость"),
+        BotCommand(command="tutor", description="🤖 Академический ИИ-тьютор"),
+        BotCommand(
+            command="model",
+            description="⚙️ Выбор модели ИИ (Groq / Gemini / G4F)",
+        ),
+        BotCommand(command="remind", description="⏰ Умные напоминания"),
+        BotCommand(command="notes", description="📓 Конспекты и заметки"),
+    ]
+    try:
+        await bot.set_my_commands(commands)
+    except Exception as exc:
+        logging.getLogger("bot").warning("Could not set bot commands: %s", exc)
 
 
 async def main() -> None:
@@ -57,9 +79,13 @@ async def main() -> None:
     try:
         await hemis_client.authenticate()
     except Exception as exc:
-        logger.warning("Initial HEMIS auth check warning (will retry on requests): %s", exc)
+        logger.warning(
+            "Initial HEMIS auth check warning (will retry on requests): %s", exc
+        )
 
-    logger.info("Academic Assistant Bot v2.0 started and polling updates...")
+    await register_bot_commands(bot)
+
+    logger.info("Academic Assistant Bot v3.0 started and polling updates...")
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
